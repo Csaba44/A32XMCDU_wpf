@@ -1,28 +1,21 @@
-﻿using System.Text;
+﻿using System;
+using System.Text;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Data;
-using System.Windows.Documents;
-using System.Windows.Input;
 using System.Windows.Media;
-using System.Windows.Media.Imaging;
-using System.Windows.Navigation;
-using System.Windows.Shapes;
 using System.IO.Ports;
 using System.Management;
+using System.Diagnostics;
 
 namespace A32XMCDU
 {
-    /// <summary>
-    /// Interaction logic for MainWindow.xaml
-    /// </summary>
     public partial class MainWindow : Window
     {
-
         private SerialPort serialPort { get; set; }
         public string[] AvailableAircraft = { "Toliss A321", "Toliss A320", "Toliss A319", "Toliss A339", "Toliss A346" };
         public string SelectedAircraft;
         public string SelectedComPort;
+
         public MainWindow()
         {
             InitializeComponent();
@@ -56,19 +49,41 @@ namespace A32XMCDU
         {
             try
             {
-                string data = serialPort.ReadLine();
+                string data = serialPort.ReadLine().Trim();
+                string commandToSend = "UNMAPPED";
+
+                string[] parts = data.Split(' ');
+
+                if (parts.Length >= 2)
+                {
+                    string buttonId = parts[0];
+                    string action = parts[1].ToLower();
+
+                    if (action == "pressed" &&
+                        AircraftMappingConfig.Mappings.ContainsKey(SelectedAircraft) &&
+                        AircraftMappingConfig.Mappings[SelectedAircraft].ContainsKey(buttonId))
+                    {
+                        commandToSend = AircraftMappingConfig.Mappings[SelectedAircraft][buttonId];
+                        SendToXPlane(commandToSend);
+                    }
+                }
 
                 Dispatcher.Invoke(() =>
                 {
                     string timestamp = DateTime.Now.ToString("HH:mm:ss");
-                    latestEventsBox.AppendText($"[{timestamp}] - {data}");
+                    latestEventsBox.AppendText($"[{timestamp}] - {data} -> {commandToSend}\r\n");
                     latestEventsBox.ScrollToEnd();
                 });
             }
             catch
             {
-                MessageBox.Show("error on receive");
+                Dispatcher.Invoke(() => MessageBox.Show("error on receive"));
             }
+        }
+
+        private void SendToXPlane(string dataref)
+        {
+            Debug.WriteLine($"XPLANE COMMAND PLACEHOLDER: {dataref}");
         }
 
         public void SetSerialStatus(string text, Brush color)
@@ -93,8 +108,7 @@ namespace A32XMCDU
             int arduinoIndex = -1;
             int index = 0;
 
-            var searcher = new ManagementObjectSearcher(
-                "SELECT * FROM Win32_PnPEntity WHERE Name LIKE '%(COM%'");
+            var searcher = new ManagementObjectSearcher("SELECT * FROM Win32_PnPEntity WHERE Name LIKE '%(COM%'");
 
             foreach (ManagementObject device in searcher.Get())
             {
@@ -121,10 +135,12 @@ namespace A32XMCDU
                     comPortComboBox.SelectedIndex = 0;
             }
         }
+
         private void acComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             SelectedAircraft = AvailableAircraft[acComboBox.SelectedIndex];
         }
+
         public void RestartSerial()
         {
             try
@@ -142,6 +158,7 @@ namespace A32XMCDU
                 SetSerialStatus("ERROR: " + ex.Message, Brushes.Red);
             }
         }
+
         private void comPortComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             string selected = comPortComboBox.SelectedItem?.ToString();
