@@ -6,21 +6,53 @@ using System.Windows.Media;
 using System.IO.Ports;
 using System.Management;
 using System.Diagnostics;
+using System.Collections.Generic;
+using System.Threading.Tasks;
+using XPlaneConnectorCore;
 
 namespace A32XMCDU
 {
     public partial class MainWindow : Window
     {
         private SerialPort serialPort { get; set; }
-        public string[] AvailableAircraft = { "Toliss A321", "Toliss A320", "Toliss A319", "Toliss A339", "Toliss A346" };
+        private XPlaneConnector xplaneConnector { get; set; }
+
         public string SelectedAircraft;
         public string SelectedComPort;
+        public string SelectedSide = "1";
+
+        // --- Tuning Variables ---
+        private readonly int debounceMs = 50;
+
+        // Hold-to-repeat variables
+        private readonly string clearButtonId = "R8C11"; // Define your clear button here
+        private bool isClearButtonPressed = false;
+        private readonly int holdDelayMs = 1000;         // 1 second wait before repeating
+        private readonly int repeatIntervalMs = 100;     // How fast to repeat (100ms = 10 times a sec)
+        // ------------------------
+
+        private Dictionary<string, DateTime> lastPressTimes = new Dictionary<string, DateTime>();
 
         public MainWindow()
         {
             InitializeComponent();
+            InitializeXPlane();
             SetSerialStatus("NOT LISTENING", Brushes.Goldenrod);
-            FillComboBox();
+            FillComboBoxes();
+        }
+
+        private void InitializeXPlane()
+        {
+            try
+            {
+                xplaneConnector = new XPlaneConnector();
+                xplaneConnector.Start();
+                Debug.WriteLine("X-Plane Connector started successfully.");
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Failed to start X-Plane Connector: {ex.Message}", "X-Plane Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
         }
 
         public void StartSerialListening()
@@ -59,21 +91,61 @@ namespace A32XMCDU
                     string buttonId = parts[0];
                     string action = parts[1].ToLower();
 
-                    if (action == "pressed" &&
+                    if (!string.IsNullOrEmpty(SelectedAircraft) &&
                         AircraftMappingConfig.Mappings.ContainsKey(SelectedAircraft) &&
                         AircraftMappingConfig.Mappings[SelectedAircraft].ContainsKey(buttonId))
                     {
-                        commandToSend = AircraftMappingConfig.Mappings[SelectedAircraft][buttonId];
-                        SendToXPlane(commandToSend);
+                        if (action == "pressed")
+                        {
+                            bool allowPress = true;
+
+                            // Debounce Check
+                            if (lastPressTimes.ContainsKey(buttonId))
+                            {
+                                if ((DateTime.Now - lastPressTimes[buttonId]).TotalMilliseconds < debounceMs)
+                                {
+                                    allowPress = false;
+                                }
+                            }
+
+                            if (allowPress)
+                            {
+                                lastPressTimes[buttonId] = DateTime.Now;
+                                string rawCommand = AircraftMappingConfig.Mappings[SelectedAircraft][buttonId];
+                                commandToSend = rawCommand.Replace("{side}", SelectedSide);
+
+                                // Send the initial command immediately
+                                SendToXPlane(commandToSend);
+
+                                // If it's the clear button, start the hold-to-repeat check
+                                if (buttonId == clearButtonId)
+                                {
+                                    isClearButtonPressed = true;
+                                    _ = HandleClearButtonHoldAsync(commandToSend);
+                                }
+                            }
+                        }
+                        else if (action == "released")
+                        {
+                            // Stop the loop if the clear button is let go
+                            if (buttonId == clearButtonId)
+                            {
+                                isClearButtonPressed = false;
+                            }
+                        }
                     }
                 }
 
-                Dispatcher.Invoke(() =>
+                // Only log if it's a "pressed" action or if it's a release but we want to debug
+                if (data.Contains("pressed"))
                 {
-                    string timestamp = DateTime.Now.ToString("HH:mm:ss");
-                    latestEventsBox.AppendText($"[{timestamp}] - {data} -> {commandToSend}\r\n");
-                    latestEventsBox.ScrollToEnd();
-                });
+                    Dispatcher.Invoke(() =>
+                    {
+                        string timestamp = DateTime.Now.ToString("HH:mm:ss");
+                        latestEventsBox.AppendText($"[{timestamp}] - {data} -> {commandToSend}\r\n");
+                        latestEventsBox.ScrollToEnd();
+                    });
+                }
             }
             catch
             {
@@ -81,9 +153,46 @@ namespace A32XMCDU
             }
         }
 
-        private void SendToXPlane(string dataref)
+        private async Task HandleClearButtonHoldAsync(string command)
         {
-            Debug.WriteLine($"XPLANE COMMAND PLACEHOLDER: {dataref}");
+            // Wait for 1 second to see if the user is holding it
+            await Task.Delay(holdDelayMs);
+
+            // If the button is still held down after 1 second, start spamming
+            while (isClearButtonPressed)
+            {
+                SendToXPlane(command);
+
+                // Optional: Log the repeated fires to the UI so you know it's working
+                Dispatcher.Invoke(() =>
+                {
+                    string timestamp = DateTime.Now.ToString("HH:mm:ss");
+                    latestEventsBox.AppendText($"[{timestamp}] - (HOLD REPEAT) -> {command}\r\n");
+                    latestEventsBox.ScrollToEnd();
+                });
+
+                await Task.Delay(repeatIntervalMs);
+            }
+        }
+
+        private void SendToXPlane(string commandString)
+        {
+            try
+            {
+                if (xplaneConnector != null && commandString != "UNMAPPED")
+                {
+                    var xplaneCmd = new XPlaneCommand(commandString, commandString);
+                    xplaneConnector.SendCommandAsync(xplaneCmd);
+                }
+            }
+            catch (Exception ex)
+            {
+                Dispatcher.Invoke(() =>
+                {
+                    latestEventsBox.AppendText($"[XPLANE ERROR] - {ex.Message}\r\n");
+                    latestEventsBox.ScrollToEnd();
+                });
+            }
         }
 
         public void SetSerialStatus(string text, Brush color)
@@ -95,15 +204,24 @@ namespace A32XMCDU
             });
         }
 
-        public void FillComboBox()
+        public void FillComboBoxes()
         {
-            foreach (var ac in AvailableAircraft)
+            foreach (var ac in AircraftMappingConfig.Mappings.Keys)
             {
                 acComboBox.Items.Add(ac);
             }
 
-            acComboBox.SelectedIndex = 0;
-            SelectedAircraft = AvailableAircraft[0];
+            if (acComboBox.Items.Count > 0)
+            {
+                acComboBox.SelectedIndex = 0;
+                SelectedAircraft = acComboBox.Items[0].ToString();
+            }
+
+            mcduSideComboBox.Items.Add("CM1");
+            mcduSideComboBox.Items.Add("CM2");
+            mcduSideComboBox.Items.Add("Center (3)");
+            mcduSideComboBox.SelectedIndex = 0;
+            SelectedSide = "1";
 
             int arduinoIndex = -1;
             int index = 0;
@@ -138,7 +256,14 @@ namespace A32XMCDU
 
         private void acComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
-            SelectedAircraft = AvailableAircraft[acComboBox.SelectedIndex];
+            SelectedAircraft = acComboBox.SelectedItem?.ToString();
+        }
+
+        private void mcduSideComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (mcduSideComboBox.SelectedIndex == 0) SelectedSide = "1";
+            else if (mcduSideComboBox.SelectedIndex == 1) SelectedSide = "2";
+            else SelectedSide = "3";
         }
 
         public void RestartSerial()
@@ -174,6 +299,21 @@ namespace A32XMCDU
             }
 
             RestartSerial();
+        }
+
+        protected override void OnClosed(EventArgs e)
+        {
+            if (serialPort != null && serialPort.IsOpen)
+            {
+                serialPort.Close();
+            }
+
+            if (xplaneConnector != null)
+            {
+                xplaneConnector.Dispose();
+            }
+
+            base.OnClosed(e);
         }
     }
 }

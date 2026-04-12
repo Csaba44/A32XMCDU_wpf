@@ -8,10 +8,12 @@
         Title="MainWindow" Height="450" Width="800">
     <Grid>
         <ComboBox Name="acComboBox" HorizontalAlignment="Left" Margin="10,10,0,0" VerticalAlignment="Top" Width="120" SelectionChanged="acComboBox_SelectionChanged"/>
-        <Label Content="Latest events&#xD;&#xA;" HorizontalAlignment="Left" Margin="10,46,0,0" VerticalAlignment="Top"/>
+        <ComboBox Name="mcduSideComboBox" HorizontalAlignment="Left" Margin="140,10,0,0" VerticalAlignment="Top" Width="120" SelectionChanged="mcduSideComboBox_SelectionChanged"/>
         <ComboBox Name="comPortComboBox" HorizontalAlignment="Left" Margin="500,10,0,0" VerticalAlignment="Top" Width="269" SelectionChanged="comPortComboBox_SelectionChanged"/>
-        <TextBox Name="latestEventsBox" HorizontalAlignment="Center" Margin="0,88,0,0" TextWrapping="Wrap" VerticalAlignment="Top" Width="734" Height="336" FontFamily="Cascadia Mono SemiBold"/>
+
+        <Label Content="Latest events&#xD;&#xA;" HorizontalAlignment="Left" Margin="10,46,0,0" VerticalAlignment="Top"/>
         <Label Content="" Name="serialStatus" HorizontalAlignment="Left" Margin="500,37,0,0" VerticalAlignment="Top" Width="269"/>
 
+        <TextBox Name="latestEventsBox" HorizontalAlignment="Center" Margin="0,88,0,0" TextWrapping="Wrap" VerticalAlignment="Top" Width="734" Height="336" FontFamily="Cascadia Mono SemiBold"/>
     </Grid>
 </Window>
