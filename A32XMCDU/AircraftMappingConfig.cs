@@ -118,7 +118,7 @@ namespace A32XMCDU
             {
                 "Toliss A320 family", new List<LedBinding>()
                 {
-                    new LedBinding { DataRef = "AirbusFBW/ADIRUOnBat", Condition = 1f, LedPin = 2 },
+                    //new LedBinding { DataRef = "AirbusFBW/ADIRUOnBat", Condition = 1f, LedPin = 2 },
                     
                 }
             }
