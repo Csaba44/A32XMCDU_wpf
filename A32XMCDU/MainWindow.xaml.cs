@@ -1,21 +1,20 @@
 ﻿using System;
-using System.Text;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO.Ports;
+using System.Management;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
-using System.IO.Ports;
-using System.Management;
-using System.Diagnostics;
-using System.Collections.Generic;
-using System.Threading.Tasks;
-using XPlaneConnectorCore;
+using XPlaneConnector;
 
 namespace A32XMCDU
 {
     public partial class MainWindow : Window
     {
         private SerialPort serialPort { get; set; }
-        private XPlaneConnector xplaneConnector { get; set; }
+        private XPlaneConnector.XPlaneConnector xplaneConnector { get; set; }
 
         public string SelectedAircraft;
         public string SelectedComPort;
@@ -33,26 +32,95 @@ namespace A32XMCDU
 
         private bool isLedTestRunning = false;
 
+        private Dictionary<int, bool> _ledStates = new Dictionary<int, bool>();
+
         public MainWindow()
         {
             InitializeComponent();
             InitializeXPlane();
             SetSerialStatus("NOT LISTENING", Brushes.Goldenrod);
             FillComboBoxes();
+            SubscribeLedDataRefs();
         }
 
         private void InitializeXPlane()
         {
             try
             {
-                xplaneConnector = new XPlaneConnector();
+                xplaneConnector = new XPlaneConnector.XPlaneConnector();
+
+                xplaneConnector.OnLog += msg => LogEvent($"[XPLANE] {msg}");
+                xplaneConnector.OnDataRefReceived += el => LogEvent($"[DREF] {el.DataRef} = {el.Value}");
+
                 xplaneConnector.Start();
-                Debug.WriteLine("X-Plane Connector started successfully.");
+
+                LogEvent("[XPLANE] Connector started.");
             }
             catch (Exception ex)
             {
                 MessageBox.Show($"Failed to start X-Plane Connector: {ex.Message}", "X-Plane Error", MessageBoxButton.OK, MessageBoxImage.Error);
             }
+        }
+
+        private void SubscribeLedDataRefs()
+        {
+            if (string.IsNullOrEmpty(SelectedAircraft))
+            {
+                LogEvent("[LED] SelectedAircraft is empty, skipping.");
+                return;
+            }
+
+            if (!AircraftMappingConfig.LedBindings.TryGetValue(SelectedAircraft, out var bindings))
+            {
+                LogEvent($"[LED] No LED bindings found for: {SelectedAircraft}");
+                return;
+            }
+
+            LogEvent($"[LED] Subscribing to {bindings.Count} dataref(s) for {SelectedAircraft}");
+
+            foreach (var binding in bindings)
+            {
+                var b = binding;
+
+                LogEvent($"[LED] Subscribing: {b.DataRef} | Condition: {b.Condition} | Pin: {b.LedPin}");
+
+                var dataRefElement = new DataRefElement
+                {
+                    DataRef = b.DataRef,
+                    Description = ""
+                };
+
+                xplaneConnector.Subscribe(dataRefElement, 10, (element, value) =>
+                {
+                    LogEvent($"[LED] Callback: {b.DataRef} = {value}");
+
+                    bool shouldBeOn = Math.Abs(value - b.Condition) < 0.001f;
+
+                    lock (_ledStates)
+                    {
+                        _ledStates.TryGetValue(b.LedPin, out bool currentState);
+
+                        if (shouldBeOn != currentState)
+                        {
+                            _ledStates[b.LedPin] = shouldBeOn;
+                            SetArduinoLedState(b.LedPin, shouldBeOn);
+                            LogEvent($"[LED] Pin {b.LedPin} -> {(shouldBeOn ? "ON" : "OFF")} | {b.DataRef} = {value}");
+                        }
+                    }
+                });
+
+                LogEvent($"[LED] Subscribed: {b.DataRef}");
+            }
+        }
+
+        private void LogEvent(string message)
+        {
+            Dispatcher.Invoke(() =>
+            {
+                string timestamp = DateTime.Now.ToString("HH:mm:ss");
+                latestEventsBox.AppendText($"[{timestamp}] {message}\r\n");
+                latestEventsBox.ScrollToEnd();
+            });
         }
 
         public void StartSerialListening()
@@ -102,9 +170,7 @@ namespace A32XMCDU
                             if (lastPressTimes.ContainsKey(buttonId))
                             {
                                 if ((DateTime.Now - lastPressTimes[buttonId]).TotalMilliseconds < debounceMs)
-                                {
                                     allowPress = false;
-                                }
                             }
 
                             if (allowPress)
@@ -141,17 +207,13 @@ namespace A32XMCDU
                                 ExecuteXPlaneAction(commandToSend);
 
                                 if (repeatableButtons.Contains(buttonId))
-                                {
                                     _ = HandleButtonHoldAsync(buttonId, commandToSend);
-                                }
                             }
                         }
                         else if (action == "released")
                         {
                             if (buttonPressedStates.ContainsKey(buttonId))
-                            {
                                 buttonPressedStates[buttonId] = false;
-                            }
                         }
                     }
                 }
@@ -183,19 +245,19 @@ namespace A32XMCDU
                     string dref = mappedCommand.Substring(8);
                     int sideIndex = int.Parse(SelectedSide) - 1;
                     mcduBrightness[sideIndex] = Math.Min(1.0f, mcduBrightness[sideIndex] + 0.1f);
-                    xplaneConnector.SetDataRefValueAsync(dref, mcduBrightness[sideIndex]);
+                    xplaneConnector.SetDataRefValue(dref, mcduBrightness[sideIndex]);
                 }
                 else if (mappedCommand.StartsWith("DREF_DN:"))
                 {
                     string dref = mappedCommand.Substring(8);
                     int sideIndex = int.Parse(SelectedSide) - 1;
                     mcduBrightness[sideIndex] = Math.Max(0.0f, mcduBrightness[sideIndex] - 0.1f);
-                    xplaneConnector.SetDataRefValueAsync(dref, mcduBrightness[sideIndex]);
+                    xplaneConnector.SetDataRefValue(dref, mcduBrightness[sideIndex]);
                 }
                 else
                 {
                     var xplaneCmd = new XPlaneCommand(mappedCommand, mappedCommand);
-                    xplaneConnector.SendCommandAsync(xplaneCmd);
+                    xplaneConnector.SendCommand(xplaneCmd);
                 }
             }
             catch (Exception ex)
@@ -227,12 +289,12 @@ namespace A32XMCDU
             }
         }
 
-        public void SetArduinoLedState(int ledIndex, bool turnOn)
+        public void SetArduinoLedState(int ledPin, bool turnOn)
         {
             if (serialPort != null && serialPort.IsOpen)
             {
                 int state = turnOn ? 1 : 0;
-                serialPort.WriteLine($"LED:{ledIndex}:{state}");
+                serialPort.WriteLine($"LED:{ledPin}:{state}");
             }
         }
 
@@ -253,9 +315,7 @@ namespace A32XMCDU
                 int delayMs = 500;
 
                 for (int i = 0; i < ledCount; i++)
-                {
                     SetArduinoLedState(i, false);
-                }
 
                 while (isLedTestRunning)
                 {
@@ -268,15 +328,11 @@ namespace A32XMCDU
 
                     currentLed++;
                     if (currentLed >= ledCount)
-                    {
                         currentLed = 0;
-                    }
                 }
 
                 for (int i = 2; i <= ledCount; i++)
-                {
                     SetArduinoLedState(i, false);
-                }
             }
             catch
             {
@@ -296,9 +352,7 @@ namespace A32XMCDU
         public void FillComboBoxes()
         {
             foreach (var ac in AircraftMappingConfig.Mappings.Keys)
-            {
                 acComboBox.Items.Add(ac);
-            }
 
             if (acComboBox.Items.Count > 0)
             {
@@ -326,9 +380,7 @@ namespace A32XMCDU
                     comPortComboBox.Items.Add(name);
 
                     if (name.ToLower().Contains("arduino"))
-                    {
                         arduinoIndex = index;
-                    }
 
                     index++;
                 }
@@ -383,9 +435,7 @@ namespace A32XMCDU
             int end = selected.LastIndexOf(")");
 
             if (start >= 0 && end > start)
-            {
                 SelectedComPort = selected.Substring(start + 1, end - start - 1);
-            }
 
             RestartSerial();
         }
@@ -395,14 +445,10 @@ namespace A32XMCDU
             isLedTestRunning = false;
 
             if (serialPort != null && serialPort.IsOpen)
-            {
                 serialPort.Close();
-            }
 
             if (xplaneConnector != null)
-            {
-                xplaneConnector.Dispose();
-            }
+                xplaneConnector.Stop();
 
             base.OnClosed(e);
         }

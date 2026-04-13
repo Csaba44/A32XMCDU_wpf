@@ -2,6 +2,13 @@
 
 namespace A32XMCDU
 {
+    public class LedBinding
+    {
+        public string DataRef { get; set; }
+        public float Condition { get; set; }
+        public int LedPin { get; set; }
+    }
+
     public static class AircraftMappingConfig
     {
         public static readonly Dictionary<string, Dictionary<string, string>> Mappings = new Dictionary<string, Dictionary<string, string>>()
@@ -101,7 +108,18 @@ namespace A32XMCDU
                     { "R6C11", "AirbusFBW/MCDU{side}KeySpace" },
                     { "R7C11", "AirbusFBW/MCDU{side}KeyOverfly" },
                     { "R8C11", "AirbusFBW/MCDU{side}KeyClear" },
+                }
+            }
+        };
 
+        // Per-aircraft LED bindings: dataref to watch, value that turns the LED on, and which Arduino pin to drive
+        public static readonly Dictionary<string, List<LedBinding>> LedBindings = new Dictionary<string, List<LedBinding>>()
+        {
+            {
+                "Toliss A320 family", new List<LedBinding>()
+                {
+                    new LedBinding { DataRef = "AirbusFBW/ADIRUOnBat", Condition = 1f, LedPin = 2 },
+                    
                 }
             }
         };
