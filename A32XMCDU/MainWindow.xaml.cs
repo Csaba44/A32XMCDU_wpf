@@ -21,7 +21,7 @@ namespace A32XMCDU
         public string SelectedComPort;
         public string SelectedSide = "1";
 
-        private readonly int debounceMs = 50;
+        private readonly int debounceMs = 100;
         private readonly int holdDelayMs = 1000;
         private readonly int repeatIntervalMs = 100;
 
