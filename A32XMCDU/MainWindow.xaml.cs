@@ -31,6 +31,8 @@ namespace A32XMCDU
 
         private float[] mcduBrightness = new float[] { 0.8f, 0.8f, 0.8f };
 
+        private bool isLedTestRunning = false;
+
         public MainWindow()
         {
             InitializeComponent();
@@ -225,6 +227,63 @@ namespace A32XMCDU
             }
         }
 
+        public void SetArduinoLedState(int ledIndex, bool turnOn)
+        {
+            if (serialPort != null && serialPort.IsOpen)
+            {
+                int state = turnOn ? 1 : 0;
+                serialPort.WriteLine($"LED:{ledIndex}:{state}");
+            }
+        }
+
+        public async Task RunLedTestAsync()
+        {
+            if (isLedTestRunning)
+            {
+                isLedTestRunning = false;
+                return;
+            }
+
+            isLedTestRunning = true;
+
+            try
+            {
+                int ledCount = 13;
+                int currentLed = 0;
+                int delayMs = 500;
+
+                for (int i = 0; i < ledCount; i++)
+                {
+                    SetArduinoLedState(i, false);
+                }
+
+                while (isLedTestRunning)
+                {
+                    SetArduinoLedState(currentLed, true);
+                    await Task.Delay(delayMs);
+
+                    if (!isLedTestRunning) break;
+
+                    SetArduinoLedState(currentLed, false);
+
+                    currentLed++;
+                    if (currentLed >= ledCount)
+                    {
+                        currentLed = 0;
+                    }
+                }
+
+                for (int i = 2; i <= ledCount; i++)
+                {
+                    SetArduinoLedState(i, false);
+                }
+            }
+            catch
+            {
+                isLedTestRunning = false;
+            }
+        }
+
         public void SetSerialStatus(string text, Brush color)
         {
             Dispatcher.Invoke(() =>
@@ -333,6 +392,8 @@ namespace A32XMCDU
 
         protected override void OnClosed(EventArgs e)
         {
+            isLedTestRunning = false;
+
             if (serialPort != null && serialPort.IsOpen)
             {
                 serialPort.Close();
@@ -344,6 +405,17 @@ namespace A32XMCDU
             }
 
             base.OnClosed(e);
+        }
+
+        private async void TestLedsButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (serialPort == null || !serialPort.IsOpen)
+            {
+                MessageBox.Show("Please select a COM port first.", "Port Closed");
+                return;
+            }
+
+            await RunLedTestAsync();
         }
     }
 }

@@ -11,6 +11,8 @@
         <ComboBox Name="mcduSideComboBox" HorizontalAlignment="Left" Margin="140,10,0,0" VerticalAlignment="Top" Width="120" SelectionChanged="mcduSideComboBox_SelectionChanged"/>
         <ComboBox Name="comPortComboBox" HorizontalAlignment="Left" Margin="500,10,0,0" VerticalAlignment="Top" Width="269" SelectionChanged="comPortComboBox_SelectionChanged"/>
 
+        <Button Content="Test LEDs" HorizontalAlignment="Left" Margin="270,10,0,0" VerticalAlignment="Top" Width="100" Height="22" Click="TestLedsButton_Click"/>
+
         <Label Content="Latest events&#xD;&#xA;" HorizontalAlignment="Left" Margin="10,46,0,0" VerticalAlignment="Top"/>
         <Label Content="" Name="serialStatus" HorizontalAlignment="Left" Margin="500,37,0,0" VerticalAlignment="Top" Width="269"/>
 
