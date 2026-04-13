@@ -9,6 +9,10 @@ namespace A32XMCDU
             {
                 "Toliss A320 family", new Dictionary<string, string>()
                 {
+                    // Brightness
+                    { "R8C4", "DREF_UP:AirbusFBW/DUBrightness[{bright}]" },
+                    { "R8C5", "DREF_DN:AirbusFBW/DUBrightness[{bright}]" },
+
                     { "R3C1", "AirbusFBW/MCDU{side}LSK1L" },
                     { "R3C2", "AirbusFBW/MCDU{side}LSK2L" },
                     { "R3C3", "AirbusFBW/MCDU{side}LSK3L" },

@@ -21,17 +21,15 @@ namespace A32XMCDU
         public string SelectedComPort;
         public string SelectedSide = "1";
 
-        // --- Tuning Variables ---
         private readonly int debounceMs = 50;
+        private readonly int holdDelayMs = 1000;
+        private readonly int repeatIntervalMs = 100;
 
-        // Hold-to-repeat variables
-        private readonly string clearButtonId = "R8C11"; // Define your clear button here
-        private bool isClearButtonPressed = false;
-        private readonly int holdDelayMs = 1000;         // 1 second wait before repeating
-        private readonly int repeatIntervalMs = 100;     // How fast to repeat (100ms = 10 times a sec)
-        // ------------------------
-
+        private HashSet<string> repeatableButtons = new HashSet<string> { "R8C11", "R8C4", "R8C5" };
+        private Dictionary<string, bool> buttonPressedStates = new Dictionary<string, bool>();
         private Dictionary<string, DateTime> lastPressTimes = new Dictionary<string, DateTime>();
+
+        private float[] mcduBrightness = new float[] { 0.8f, 0.8f, 0.8f };
 
         public MainWindow()
         {
@@ -99,7 +97,6 @@ namespace A32XMCDU
                         {
                             bool allowPress = true;
 
-                            // Debounce Check
                             if (lastPressTimes.ContainsKey(buttonId))
                             {
                                 if ((DateTime.Now - lastPressTimes[buttonId]).TotalMilliseconds < debounceMs)
@@ -111,32 +108,52 @@ namespace A32XMCDU
                             if (allowPress)
                             {
                                 lastPressTimes[buttonId] = DateTime.Now;
+                                buttonPressedStates[buttonId] = true;
+
+                                if (buttonPressedStates.ContainsKey("R3C1") && buttonPressedStates["R3C1"])
+                                {
+                                    bool sideChanged = false;
+                                    if (buttonId == "R1C8") { SelectedSide = "1"; sideChanged = true; }
+                                    else if (buttonId == "R2C8") { SelectedSide = "2"; sideChanged = true; }
+                                    else if (buttonId == "R3C8") { SelectedSide = "3"; sideChanged = true; }
+
+                                    if (sideChanged)
+                                    {
+                                        Dispatcher.Invoke(() =>
+                                        {
+                                            mcduSideComboBox.SelectedIndex = int.Parse(SelectedSide) - 1;
+                                            string timestamp = DateTime.Now.ToString("HH:mm:ss");
+                                            latestEventsBox.AppendText($"[{timestamp}] - SHORTCUT: MCDU Side Switched to {SelectedSide}\r\n");
+                                            latestEventsBox.ScrollToEnd();
+                                        });
+                                        return;
+                                    }
+                                }
+
                                 string rawCommand = AircraftMappingConfig.Mappings[SelectedAircraft][buttonId];
                                 commandToSend = rawCommand.Replace("{side}", SelectedSide);
 
-                                // Send the initial command immediately
-                                SendToXPlane(commandToSend);
+                                int brightIndex = SelectedSide == "1" ? 6 : (SelectedSide == "2" ? 7 : 8);
+                                commandToSend = commandToSend.Replace("{bright}", brightIndex.ToString());
 
-                                // If it's the clear button, start the hold-to-repeat check
-                                if (buttonId == clearButtonId)
+                                ExecuteXPlaneAction(commandToSend);
+
+                                if (repeatableButtons.Contains(buttonId))
                                 {
-                                    isClearButtonPressed = true;
-                                    _ = HandleClearButtonHoldAsync(commandToSend);
+                                    _ = HandleButtonHoldAsync(buttonId, commandToSend);
                                 }
                             }
                         }
                         else if (action == "released")
                         {
-                            // Stop the loop if the clear button is let go
-                            if (buttonId == clearButtonId)
+                            if (buttonPressedStates.ContainsKey(buttonId))
                             {
-                                isClearButtonPressed = false;
+                                buttonPressedStates[buttonId] = false;
                             }
                         }
                     }
                 }
 
-                // Only log if it's a "pressed" action or if it's a release but we want to debug
                 if (data.Contains("pressed"))
                 {
                     Dispatcher.Invoke(() =>
@@ -153,35 +170,29 @@ namespace A32XMCDU
             }
         }
 
-        private async Task HandleClearButtonHoldAsync(string command)
-        {
-            // Wait for 1 second to see if the user is holding it
-            await Task.Delay(holdDelayMs);
-
-            // If the button is still held down after 1 second, start spamming
-            while (isClearButtonPressed)
-            {
-                SendToXPlane(command);
-
-                // Optional: Log the repeated fires to the UI so you know it's working
-                Dispatcher.Invoke(() =>
-                {
-                    string timestamp = DateTime.Now.ToString("HH:mm:ss");
-                    latestEventsBox.AppendText($"[{timestamp}] - (HOLD REPEAT) -> {command}\r\n");
-                    latestEventsBox.ScrollToEnd();
-                });
-
-                await Task.Delay(repeatIntervalMs);
-            }
-        }
-
-        private void SendToXPlane(string commandString)
+        private void ExecuteXPlaneAction(string mappedCommand)
         {
             try
             {
-                if (xplaneConnector != null && commandString != "UNMAPPED")
+                if (xplaneConnector == null || mappedCommand == "UNMAPPED") return;
+
+                if (mappedCommand.StartsWith("DREF_UP:"))
                 {
-                    var xplaneCmd = new XPlaneCommand(commandString, commandString);
+                    string dref = mappedCommand.Substring(8);
+                    int sideIndex = int.Parse(SelectedSide) - 1;
+                    mcduBrightness[sideIndex] = Math.Min(1.0f, mcduBrightness[sideIndex] + 0.1f);
+                    xplaneConnector.SetDataRefValueAsync(dref, mcduBrightness[sideIndex]);
+                }
+                else if (mappedCommand.StartsWith("DREF_DN:"))
+                {
+                    string dref = mappedCommand.Substring(8);
+                    int sideIndex = int.Parse(SelectedSide) - 1;
+                    mcduBrightness[sideIndex] = Math.Max(0.0f, mcduBrightness[sideIndex] - 0.1f);
+                    xplaneConnector.SetDataRefValueAsync(dref, mcduBrightness[sideIndex]);
+                }
+                else
+                {
+                    var xplaneCmd = new XPlaneCommand(mappedCommand, mappedCommand);
                     xplaneConnector.SendCommandAsync(xplaneCmd);
                 }
             }
@@ -192,6 +203,25 @@ namespace A32XMCDU
                     latestEventsBox.AppendText($"[XPLANE ERROR] - {ex.Message}\r\n");
                     latestEventsBox.ScrollToEnd();
                 });
+            }
+        }
+
+        private async Task HandleButtonHoldAsync(string buttonId, string command)
+        {
+            await Task.Delay(holdDelayMs);
+
+            while (buttonPressedStates.ContainsKey(buttonId) && buttonPressedStates[buttonId])
+            {
+                ExecuteXPlaneAction(command);
+
+                Dispatcher.Invoke(() =>
+                {
+                    string timestamp = DateTime.Now.ToString("HH:mm:ss");
+                    latestEventsBox.AppendText($"[{timestamp}] - (HOLD REPEAT) -> {command}\r\n");
+                    latestEventsBox.ScrollToEnd();
+                });
+
+                await Task.Delay(repeatIntervalMs);
             }
         }
 
